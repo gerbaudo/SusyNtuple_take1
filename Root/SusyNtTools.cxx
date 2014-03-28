@@ -9,6 +9,8 @@
 
 #include "SusyNtuple/SusyNtTools.h"
 
+#include <cassert>
+
 using namespace std;
 using namespace Susy;
 
@@ -789,24 +791,16 @@ bool SusyNtTools::isSignalJet(const Jet* jet, SusyNtSys sys)
 {
   // For now, 2lep analysis is not using this jet definition
   //float ptCut = m_anaType==Ana_2Lep? JET_SIGNAL_PT_CUT_2L : JET_SIGNAL_PT_CUT_3L;
-  float ptCut = JET_SIGNAL_PT_CUT_3L;
-  
-  if(jet->Pt() < ptCut) return false;
-  if(fabs(jet->Eta()) > JET_ETA_CUT) return false;
-
-  // JVF cut is now only to be applied to jets with pt < 50 GeV and |detEta| < 2.4
-  //if(jet->jvf < JET_JVF_CUT) return false;
-  if(jet->Pt() < JET_JVF_PT && fabs(jet->detEta) < JET_JVF_ETA){
-    float jvfCut = JET_JVF_CUT;
-    bool isPileUp = false; // Twiki says to treat all jets as hardscatter
-    if(sys == NtSys_JVF_UP){
-      jvfCut = m_jvfTool->getJVFcut(JET_JVF_CUT, isPileUp, jet->Pt(), jet->detEta, true);
-    } else if(sys == NtSys_JVF_DN){
-      jvfCut = m_jvfTool->getJVFcut(JET_JVF_CUT, isPileUp, jet->Pt(), jet->detEta, false);
+    bool pass = false;
+    if(jet) {
+        float ptCut = JET_SIGNAL_PT_CUT_3L;
+        pass = (jet->Pt() > ptCut
+                && fabs(jet->Eta()) < JET_ETA_CUT
+                && SusyNtTools::jetPassesJvfRequirement(jet, m_jvfTool, JET_JVF_PT, JET_JVF_ETA, JET_JVF_CUT, sys));
+    } else {
+        cout<<"isSignalJet: invalid jet("<<jet<<"), return "<<pass<<endl;
     }
-    if(jet->jvf < jvfCut) return false; 
-  }
-  return true;
+    return pass;
 }
 
 /*--------------------------------------------------------------------------------*/
@@ -814,7 +808,7 @@ bool SusyNtTools::isSignalJet(const Jet* jet, SusyNtSys sys)
 /*--------------------------------------------------------------------------------*/
 bool SusyNtTools::isSignalJet2Lep(const Jet* jet, SusyNtSys sys)
 {
-  if(!isCentralLightJet(jet, sys) &&
+  if(!isCentralLightJet(jet, m_jvfTool, sys) &&
      !isCentralBJet(jet) &&
      !isForwardJet(jet)
     ) return false;
@@ -825,24 +819,18 @@ bool SusyNtTools::isSignalJet2Lep(const Jet* jet, SusyNtSys sys)
 /*--------------------------------------------------------------------------------*/
 // Check if given Jet is 2 Lepton Central Light Jet
 /*--------------------------------------------------------------------------------*/
-bool SusyNtTools::isCentralLightJet(const Jet* jet, SusyNtSys sys)
+bool SusyNtTools::isCentralLightJet(const Jet* jet, JVFUncertaintyTool* jvfTool, SusyNtSys sys)
 {
-  if(jet->Pt() < JET_PT_L20_CUT) return false;
-  //if(fabs(jet->Eta()) > JET_ETA_CUT_2L) return false;
-  if(fabs(jet->detEta) > JET_ETA_CUT_2L) return false;
-  if(jet->Pt() < JET_JVF_PT){
-    float jvfCut = JET_JVF_CUT_2L;
-    bool isPileUp = false; // Twiki says to treat all jets as hardscatter
-    if(sys == NtSys_JVF_UP){
-      jvfCut = m_jvfTool->getJVFcut(JET_JVF_CUT_2L, isPileUp, jet->Pt(), jet->detEta, true);
-    } else if(sys == NtSys_JVF_DN){
-      jvfCut = m_jvfTool->getJVFcut(JET_JVF_CUT_2L, isPileUp, jet->Pt(), jet->detEta, false);
+    bool pass = false;
+    if(jet) {
+        pass = (jet->Pt() > JET_PT_L20_CUT
+                && fabs(jet->Eta()) < JET_ETA_CUT_2L // DG why not detEta?
+                && jet->mv1 < MV1_80
+                && SusyNtTools::jetPassesJvfRequirement(jet, jvfTool, JET_JVF_PT, JET_JVF_ETA, JET_JVF_CUT, sys));
+    } else {
+        cout<<"isCentralLightJet: invalid jet("<<jet<<"), return "<<pass<<endl;
     }
-    if(fabs(jet->jvf) - 1e-3 < jvfCut) return false;
-  }
-  if(jet->mv1 > MV1_80) return false;
-
-  return true;
+    return pass;
 }
 
 /*--------------------------------------------------------------------------------*/
@@ -873,13 +861,13 @@ bool SusyNtTools::isForwardJet(const Jet* jet)
 /*--------------------------------------------------------------------------------*/
 // Count Number of 2 Lepton Central Light Jets
 /*--------------------------------------------------------------------------------*/
-int SusyNtTools::numberOfCLJets(const JetVector& jets, SusyNtSys sys)
+int SusyNtTools::numberOfCLJets(const JetVector& jets, JVFUncertaintyTool* jvfTool, SusyNtSys sys)
 {
   int ans = 0;
 
   for(uint ij=0; ij<jets.size(); ++ij){
     const Jet* j = jets.at(ij);
-    if(isCentralLightJet(j, sys)){
+    if(isCentralLightJet(j, jvfTool, sys)){
       ans++;
     }
   }
@@ -927,7 +915,7 @@ int SusyNtTools::numberOfFJets(const JetVector& jets)
 void SusyNtTools::getNumberOf2LepJets(const JetVector& jets, int& Ncl, int& Ncb, int& Nf,
                                       SusyNtSys sys)
 {
-  Ncl = numberOfCLJets(jets, sys);
+  Ncl = numberOfCLJets(jets, m_jvfTool, sys);
   Ncb = numberOfCBJets(jets);
   Nf  = numberOfFJets (jets);
   return;
@@ -2199,3 +2187,30 @@ bool SusyNtTools::isSherpaSample(unsigned int mcID)
 
   return false;
 }
+//----------------------------------------------------------
+bool SusyNtTools::jetPassesJvfRequirement(const Susy::Jet* jet, JVFUncertaintyTool* jvfTool,
+                                          float maxPt, float maxEta, float nominalJvtThres, SusyNtSys sys)
+{
+    bool pass=false;
+    if(jet) {
+        float pt(jet->Pt()), eta(jet->detEta);
+        float jvfThres(nominalJvtThres);
+        bool applyJvf(pt < maxPt && fabs(eta) < maxEta);
+        bool jvfUp(sys == NtSys_JVF_UP), jvfDown(sys == NtSys_JVF_DN);
+        if(jvfUp || jvfDown) {
+            if(jvfTool) {
+                bool isPileUp = false; // Twiki [add link here] says to treat all jets as hardscatter
+                jvfThres = jvfTool->getJVFcut(nominalJvtThres, isPileUp, pt, eta, jvfUp);
+            } else {
+                cout<<"jetPassesJvfRequirement: error, jvfTool required ("<<jvfTool<<")"<<endl;
+                assert(jvfTool);
+            }
+        }
+        pass = (applyJvf ? (jet->jvf > jvfThres) : true);
+    } else {
+        cout<<"jetPassesJvfRequirement: invalid inputs jet("<<jet<<"), jvfTool("<<jvfTool<<")."
+            <<"Return "<<pass<<endl;
+    }
+    return pass;
+}
+//----------------------------------------------------------
